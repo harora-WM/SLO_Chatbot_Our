@@ -76,6 +76,8 @@ class DataLoader:
                     continue
 
             df = pd.DataFrame(records)
+            # Ensure continuous index for DuckDB compatibility
+            df = df.reset_index(drop=True)
             logger.info(f"Parsed {len(df)} service log records")
             return df
 
@@ -134,6 +136,8 @@ class DataLoader:
                     continue
 
             df = pd.DataFrame(records)
+            # Ensure continuous index for DuckDB compatibility
+            df = df.reset_index(drop=True)
             logger.info(f"Parsed {len(df)} error log records")
             return df
 

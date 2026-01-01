@@ -120,9 +120,17 @@ class DuckDBManager:
                 logger.error("All rows were invalid after cleaning")
                 return
 
+            # Reset index to avoid DuckDB index out of bounds errors
+            df = df.reset_index(drop=True)
+
             # Clear existing data and insert fresh
             self.conn.execute("DELETE FROM service_logs")
-            self.conn.execute("INSERT INTO service_logs SELECT * FROM df")
+
+            # Register DataFrame explicitly with DuckDB to avoid index issues
+            self.conn.register('temp_service_df', df)
+            self.conn.execute("INSERT INTO service_logs SELECT * FROM temp_service_df")
+            self.conn.unregister('temp_service_df')
+
             logger.info(f"Inserted {len(df)} service log records")
         except Exception as e:
             logger.error(f"Failed to insert service logs: {e}", exc_info=True)
@@ -162,9 +170,17 @@ class DuckDBManager:
                 logger.error("All rows were invalid after cleaning")
                 return
 
+            # Reset index to avoid DuckDB index out of bounds errors
+            df = df.reset_index(drop=True)
+
             # Clear existing data and insert fresh
             self.conn.execute("DELETE FROM error_logs")
-            self.conn.execute("INSERT INTO error_logs SELECT * FROM df")
+
+            # Register DataFrame explicitly with DuckDB to avoid index issues
+            self.conn.register('temp_error_df', df)
+            self.conn.execute("INSERT INTO error_logs SELECT * FROM temp_error_df")
+            self.conn.unregister('temp_error_df')
+
             logger.info(f"Inserted {len(df)} error log records")
         except Exception as e:
             logger.error(f"Failed to insert error logs: {e}", exc_info=True)

@@ -2,6 +2,9 @@
 
 import json
 import boto3
+import pandas as pd
+import numpy as np
+from datetime import datetime, date
 from typing import Dict, List, Any, Optional
 from utils.logger import setup_logger
 from utils.config import (
@@ -12,6 +15,23 @@ from utils.config import (
 )
 
 logger = setup_logger(__name__)
+
+
+class DateTimeEncoder(json.JSONEncoder):
+    """Custom JSON encoder for datetime and pandas objects."""
+
+    def default(self, obj):
+        if isinstance(obj, (pd.Timestamp, datetime, date)):
+            return obj.isoformat()
+        if isinstance(obj, np.integer):
+            return int(obj)
+        if isinstance(obj, np.floating):
+            return float(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        if pd.isna(obj):
+            return None
+        return super().default(obj)
 
 
 class ClaudeClient:
@@ -124,7 +144,7 @@ class ClaudeClient:
                 tool_results.append({
                     "type": "tool_result",
                     "tool_use_id": tool_use_id,
-                    "content": json.dumps(result)
+                    "content": json.dumps(result, cls=DateTimeEncoder)
                 })
 
                 logger.info(f"Tool {tool_name} executed successfully")
@@ -134,7 +154,7 @@ class ClaudeClient:
                 tool_results.append({
                     "type": "tool_result",
                     "tool_use_id": tool_use_id,
-                    "content": json.dumps({"error": str(e)})
+                    "content": json.dumps({"error": str(e)}, cls=DateTimeEncoder)
                 })
 
         # Send tool results back to Claude
