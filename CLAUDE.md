@@ -9,9 +9,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 pip install -r requirements.txt
 cp .env.example .env  # Then edit .env with your credentials
 
-# Activate virtual environment (if using one)
-source venv/bin/activate
-
 # Run the application
 streamlit run app.py
 
@@ -119,7 +116,33 @@ json_str = json.dumps(result)
 - `np.ndarray` → Python list
 - `pd.NA/np.nan` → `null`
 
-This is critical in `agent/claude_client.py` (lines 147, 157) where tool results are serialized to send back to Claude.
+This is critical in `agent/claude_client.py` where tool results are serialized to send back to Claude.
+
+### Tool Calling Response Handling
+
+When Claude uses tools, the response contains `content` blocks with type `tool_use`. Handle them like this:
+
+```python
+response_content = response_body.get("content", [])
+
+for content in response_content:
+    if content.get("type") == "tool_use":
+        tool_name = content.get("name")
+        tool_input = content.get("input", {})
+        tool_use_id = content.get("id")
+
+        # Execute function
+        result = function_executor.execute(tool_name, tool_input)
+
+        # Send result back in tool_result format
+        tool_result = {
+            "type": "tool_result",
+            "tool_use_id": tool_use_id,
+            "content": json.dumps(result, cls=DateTimeEncoder)
+        }
+```
+
+The `tool_use_id` from Claude's response must be included in the `tool_result` sent back. This is how Claude matches results to requests in multi-tool scenarios.
 
 ### DuckDB INSERT Pattern
 
@@ -154,8 +177,12 @@ All configuration is centralized in `utils/config.py`:
 # SLO Thresholds
 DEFAULT_ERROR_SLO_THRESHOLD = 1.0      # 1% error rate target
 DEFAULT_RESPONSE_TIME_SLO = 1.0        # 1 second target
+DEFAULT_SLO_TARGET_PERCENT = 98        # 98% of requests must meet SLO
 DEGRADATION_WINDOW_MINUTES = 30        # Time window for degradation detection
 DEGRADATION_THRESHOLD_PERCENT = 20     # 20% change = degradation
+
+# Paths
+DUCKDB_PATH = DATABASE_DIR / "slo_analytics.duckdb"
 ```
 
 All credentials are configured in `.env` (never commit this file):
@@ -174,20 +201,35 @@ OPENSEARCH_PASSWORD=...
 OPENSEARCH_USE_SSL=False
 OPENSEARCH_INDEX_SERVICE=hourly_wm_wmplatform_31854
 OPENSEARCH_INDEX_ERROR=hourly_wm_wmplatform_31854_error
+
+# Logging
+LOG_LEVEL=INFO
 ```
 
 Use `.env.example` as a template for new setup.
 
-## Analytics Functions
+**Important**: The Bedrock model ID format is region-specific. The `global.` prefix enables cross-region inference.
 
-Claude has access to 14 analytics functions via tool calling (defined in `agent/function_tools.py`). The tool calling mechanism works as follows:
+## Tool Calling Flow
 
-1. User sends a message via Streamlit chat
-2. Claude receives the message along with `TOOLS` list (tool definitions)
-3. Claude decides which tools to call and returns `tool_use` content blocks
-4. `FunctionExecutor.execute()` dispatches the call to the appropriate analytics module
-5. Tool results are sent back to Claude in the next message
-6. Claude synthesizes the results into a natural language response
+Claude has access to 14 analytics functions via tool calling (`agent/function_tools.py`). The complete flow:
+
+1. **User sends message** via Streamlit chat → `app.py` receives input
+2. **Claude receives message** along with `TOOLS` list (tool definitions) in request body
+3. **Claude decides which tools to call** → returns `tool_use` content blocks in response
+4. **FunctionExecutor.execute()** dispatches each tool call:
+   ```python
+   function_map = {
+       "get_degrading_services": self._get_degrading_services,
+       "get_error_code_distribution": self._get_error_code_distribution,
+       # ... 12 more functions
+   }
+   result = function_map[tool_name](**tool_input)
+   ```
+5. **Tool results serialized** using `DateTimeEncoder` → sent back to Claude as new user message
+6. **Claude synthesizes results** into natural language response → displayed to user
+
+**Key architectural point**: The `FunctionExecutor` class acts as a dispatcher. Each `_get_*` wrapper method calls the corresponding analytics module method and ensures consistent return format.
 
 Available functions:
 
@@ -310,15 +352,52 @@ Alternatively, use Streamlit's "Rerun" button in the UI, but this doesn't clear 
 
 **Solution:** Use the custom `DateTimeEncoder` class when calling `json.dumps()`. See "JSON Serialization Pattern" above.
 
+## Database Schema
+
+DuckDB stores two main tables (`data/database/duckdb_manager.py`):
+
+**service_logs table**:
+- Primary key: `id` (VARCHAR)
+- Core metrics: `total_count`, `success_count`, `error_count`, `error_rate`, `response_time_avg`
+- SLO targets: `target_error_slo_perc`, `target_response_slo_sec`, `response_target_percent`
+- Time dimension: `record_time` (TIMESTAMP)
+- Identifiers: `app_id`, `sid`, `service_name`
+
+**error_logs table**:
+- Primary key: `id` (VARCHAR)
+- Error breakdown: `error_codes` (VARCHAR), `technical_error_count`, `business_error_count`
+- Metrics: `error_count`, `total_count`, `response_time_avg`
+- Time dimension: `record_time` (TIMESTAMP)
+- Identifiers: `wm_application_id`, `wm_application_name`, `wm_transaction_id`
+
+**Critical constraint**: Both tables use single-column PRIMARY KEY. Never use `INSERT OR REPLACE` with these schemas - use `DELETE + INSERT` pattern instead.
+
 ## File Organization
 
 ```
-analytics/     - 4 analytics modules (SLO, degradation, trends, metrics)
-agent/         - 2 files (Claude client, function definitions)
-data/          - 2 subfolders (ingestion, database)
-utils/         - 2 files (config, logger)
-app.py         - 437 lines, main Streamlit UI
-test_system.py - Complete test suite
+analytics/
+  ├── slo_calculator.py        - SLI/SLO metrics, error budgets, burn rates
+  ├── degradation_detector.py  - Time-window comparison for degradation detection
+  ├── trend_analyzer.py        - Linear regression predictions
+  └── metrics.py               - Aggregated metrics (top services, slowest, etc.)
+
+agent/
+  ├── claude_client.py         - AWS Bedrock integration with conversation history
+  └── function_tools.py        - 14 tool definitions + FunctionExecutor dispatcher
+
+data/
+  ├── ingestion/
+  │   ├── data_loader.py       - Parses OpenSearch JSON to pandas DataFrames
+  │   └── opensearch_client.py - Queries OpenSearch (with Scroll API support)
+  └── database/
+      └── duckdb_manager.py    - OLAP database with INSERT/query methods
+
+utils/
+  ├── config.py                - All configuration (AWS, OpenSearch, SLO thresholds)
+  └── logger.py                - Logging setup
+
+app.py                         - Streamlit UI (dashboard + chat tabs)
+test_system.py                 - Complete test suite
 ```
 
 ## Streamlit App Structure
@@ -327,40 +406,85 @@ The app has two tabs:
 1. **Dashboard Tab** - Displays metrics, charts, SLO violations
 2. **Chat Tab** - Conversational interface with Claude
 
-State management:
-- `st.session_state.messages` - Chat history
-- `@st.cache_resource` - Caches initialized components (DB, analytics, Claude client)
+**State management** (`app.py`):
+- `st.session_state.messages` - Chat history (list of dicts with `role` and `content`)
+- `@st.cache_resource` - Caches initialized components:
+  - `init_system()` returns (db_manager, analytics_modules, claude_client, function_executor)
+  - **CRITICAL**: Code changes to cached classes won't apply until Streamlit restart + cache clear
 
-## Development Notes
-
-When modifying analytics functions:
-1. Always add NaN checks for integer conversions
-2. Test with `test_system.py`
-3. Verify both OpenSearch (scripted_metric) and JSON (fields) data paths
-4. Use `pd.notna()` before any `int()` conversion
-5. Return consistent dictionary structures for Claude to parse
-
-When adding new analytics:
-1. Add method to appropriate analytics module (returns dict/list)
-2. Add wrapper method to `FunctionExecutor` in `agent/function_tools.py` (e.g., `_get_my_function`)
-3. Add function name to `function_map` dict in `FunctionExecutor.execute()`
-4. Add tool definition to `TOOLS` list with name, description, and input_schema
-5. Test with sample queries through chat interface
-
-Example tool definition structure:
+**Conversation history pattern** (`agent/claude_client.py`):
 ```python
-{
-    "name": "my_function",
-    "description": "What this function does for Claude to understand",
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "param_name": {
-                "type": "string",
-                "description": "What this parameter means"
-            }
-        },
-        "required": ["param_name"]  # Optional
-    }
-}
+# ClaudeClient maintains conversation_history as instance variable
+self.conversation_history = []
+
+# Each user message appends to history
+self.conversation_history.append({"role": "user", "content": user_message})
+
+# Each assistant response appends to history
+self.conversation_history.append({"role": "assistant", "content": response_content})
+
+# Tool results are sent as new user messages
+self.conversation_history.append({"role": "user", "content": tool_results})
+```
+
+This maintains multi-turn context for Claude across the entire session.
+
+## Development Workflows
+
+### When modifying analytics functions:
+1. **Always add NaN checks** for integer conversions (see "NaN Handling Pattern")
+2. **Test with** `python test_system.py`
+3. **Verify both data paths**: OpenSearch (scripted_metric) and JSON (fields)
+4. **Use `pd.notna()`** before any `int()` conversion
+5. **Return consistent structures** (dict/list) for Claude to parse
+6. **Use DateTimeEncoder** when serializing results
+
+### When adding new analytics functions:
+1. **Add method** to appropriate analytics module (e.g., `analytics/metrics.py`)
+   ```python
+   def get_my_metric(self, param: str) -> Dict[str, Any]:
+       """Calculate my metric."""
+       # Query DuckDB, aggregate data
+       return {"metric_name": value, "timestamp": pd.Timestamp.now()}
+   ```
+
+2. **Add wrapper** in `FunctionExecutor` (`agent/function_tools.py`)
+   ```python
+   def _get_my_metric(self, param: str) -> Dict[str, Any]:
+       return self.metrics.get_my_metric(param)
+   ```
+
+3. **Register in function_map** in `FunctionExecutor.execute()`
+   ```python
+   function_map = {
+       # ... existing functions
+       "get_my_metric": self._get_my_metric,
+   }
+   ```
+
+4. **Add tool definition** to `TOOLS` list in `agent/function_tools.py`
+   ```python
+   {
+       "name": "get_my_metric",
+       "description": "Calculate my metric for a given parameter",
+       "input_schema": {
+           "type": "object",
+           "properties": {
+               "param": {
+                   "type": "string",
+                   "description": "Parameter description"
+               }
+           },
+           "required": ["param"]
+       }
+   }
+   ```
+
+5. **Test** via Streamlit chat interface with sample queries
+
+### When debugging Streamlit cache issues:
+```bash
+# Stop Streamlit (Ctrl+C)
+find . -type d -name "__pycache__" -exec rm -r {} + 2>/dev/null || true
+streamlit run app.py
 ```

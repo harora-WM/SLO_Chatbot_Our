@@ -56,6 +56,7 @@ class FunctionExecutor:
             "get_slowest_services": self._get_slowest_services,
             "get_error_prone_services": self._get_error_prone_services,
             "get_top_errors": self._get_top_errors,
+            "get_error_details_by_code": self._get_error_details_by_code,
             "get_historical_patterns": self._get_historical_patterns
         }
 
@@ -125,6 +126,11 @@ class FunctionExecutor:
         """Get top error codes."""
         result = self.metrics_aggregator.get_top_errors(limit)
         return {"errors": result, "count": len(result)}
+
+    def _get_error_details_by_code(self, error_code: str, limit: int = 5) -> Dict[str, Any]:
+        """Get detailed error logs for a specific error code."""
+        result = self.metrics_aggregator.get_error_details_by_code(error_code, limit)
+        return {"error_code": error_code, "details": result, "count": len(result)}
 
     def _get_historical_patterns(self, service_name: str) -> Dict[str, Any]:
         """Get historical patterns for service."""
@@ -308,6 +314,25 @@ TOOLS = [
                     "default": 10
                 }
             }
+        }
+    },
+    {
+        "name": "get_error_details_by_code",
+        "description": "Get detailed error logs for a specific error code. Returns full error details including transaction names, timestamps, and complete error log entries for debugging.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "error_code": {
+                    "type": "string",
+                    "description": "The error code to search for (e.g., '404', '500', '302')"
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Number of error details to return (default: 5)",
+                    "default": 5
+                }
+            },
+            "required": ["error_code"]
         }
     },
     {

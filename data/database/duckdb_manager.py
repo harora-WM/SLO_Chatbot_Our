@@ -53,6 +53,14 @@ class DuckDBManager:
                 response_time_avg DOUBLE,
                 response_time_min DOUBLE,
                 response_time_max DOUBLE,
+                response_time_p25 DOUBLE,
+                response_time_p50 DOUBLE,
+                response_time_p75 DOUBLE,
+                response_time_p80 DOUBLE,
+                response_time_p85 DOUBLE,
+                response_time_p90 DOUBLE,
+                response_time_p95 DOUBLE,
+                response_time_p99 DOUBLE,
                 target_error_slo_perc DOUBLE,
                 target_response_slo_sec DOUBLE,
                 response_target_percent DOUBLE
@@ -66,6 +74,7 @@ class DuckDBManager:
                 wm_application_id INTEGER,
                 wm_application_name VARCHAR,
                 wm_transaction_id INTEGER,
+                wm_transaction_name VARCHAR,
                 error_codes VARCHAR,
                 error_count INTEGER,
                 total_count INTEGER,
@@ -74,6 +83,7 @@ class DuckDBManager:
                 response_time_avg DOUBLE,
                 response_time_min DOUBLE,
                 response_time_max DOUBLE,
+                error_details VARCHAR,
                 record_time TIMESTAMP
             )
         """)

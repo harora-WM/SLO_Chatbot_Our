@@ -50,6 +50,9 @@ class DataLoader:
                     # Check if data is in scripted_metric (from OpenSearch) or fields (from JSON export)
                     scripted_metric = source.get('scripted_metric', {})
 
+                    # Extract percentiles from the nested structure
+                    percentiles = source.get('percentiles_response_time_max', {})
+
                     # Extract and flatten the data - prefer scripted_metric, fallback to fields
                     record = {
                         'id': hit.get('_id'),
@@ -66,6 +69,14 @@ class DataLoader:
                         'response_time_avg': source.get('response_time_avg'),
                         'response_time_min': source.get('response_time_min'),
                         'response_time_max': source.get('response_time_max'),
+                        'response_time_p25': percentiles.get('25.0'),
+                        'response_time_p50': percentiles.get('50.0'),
+                        'response_time_p75': percentiles.get('75.0'),
+                        'response_time_p80': percentiles.get('80.0'),
+                        'response_time_p85': percentiles.get('85.0'),
+                        'response_time_p90': percentiles.get('90.0'),
+                        'response_time_p95': percentiles.get('95.0'),
+                        'response_time_p99': percentiles.get('99.0'),
                         'target_error_slo_perc': scripted_metric.get('target_error_slo_perc') or self._extract_first(fields.get('target_error_slo_perc')),
                         'target_response_slo_sec': scripted_metric.get('target_response_slo_sec') or self._extract_first(fields.get('target_response_slo_sec')),
                         'response_target_percent': scripted_metric.get('response_target_percent') or self._extract_first(fields.get('response_target_percent'))
@@ -120,6 +131,7 @@ class DataLoader:
                         'wm_application_id': source.get('wmApplicationId'),
                         'wm_application_name': source.get('wmApplicationName'),
                         'wm_transaction_id': source.get('wmTransactionId'),
+                        'wm_transaction_name': scripted_metric.get('wmTransactionName') or self._extract_first(fields.get('wmTransactionName')),
                         'error_codes': source.get('errorCodes'),
                         'error_count': scripted_metric.get('error_count') or source.get('error_count'),
                         'total_count': source.get('total_count'),
@@ -128,6 +140,7 @@ class DataLoader:
                         'response_time_avg': source.get('responseTime_avg'),
                         'response_time_min': source.get('responseTime_min'),
                         'response_time_max': source.get('responseTime_max'),
+                        'error_details': scripted_metric.get('error_details') or self._extract_first(fields.get('error_details')),
                         'record_time': source.get('record_time')
                     }
                     records.append(record)

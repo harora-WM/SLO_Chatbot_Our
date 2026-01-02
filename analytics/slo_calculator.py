@@ -39,6 +39,9 @@ class SLOCalculator:
                 AVG(success_rate) as avg_success_rate,
                 AVG(error_rate) as avg_error_rate,
                 AVG(response_time_avg) as avg_response_time,
+                AVG(response_time_p50) as avg_response_time_p50,
+                AVG(response_time_p95) as avg_response_time_p95,
+                AVG(response_time_p99) as avg_response_time_p99,
                 SUM(total_count) as total_requests,
                 SUM(error_count) as total_errors,
                 MAX(target_error_slo_perc) as error_slo_target,
@@ -225,6 +228,9 @@ class SLOCalculator:
                 'success_rate': sli['avg_success_rate'],
                 'error_rate': sli['avg_error_rate'],
                 'response_time_avg': sli['avg_response_time'],
+                'response_time_p50': sli.get('avg_response_time_p50') if pd.notna(sli.get('avg_response_time_p50')) else None,
+                'response_time_p95': sli.get('avg_response_time_p95') if pd.notna(sli.get('avg_response_time_p95')) else None,
+                'response_time_p99': sli.get('avg_response_time_p99') if pd.notna(sli.get('avg_response_time_p99')) else None,
                 'total_requests': sli['total_requests']
             },
             'slo_targets': {

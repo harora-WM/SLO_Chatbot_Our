@@ -53,6 +53,8 @@ class DegradationDetector:
                 service_name,
                 AVG(error_rate) as avg_error_rate,
                 AVG(response_time_avg) as avg_response_time,
+                AVG(response_time_p95) as avg_response_time_p95,
+                AVG(response_time_p99) as avg_response_time_p99,
                 SUM(total_count) as total_requests,
                 SUM(error_count) as total_errors
             FROM service_logs
@@ -67,6 +69,8 @@ class DegradationDetector:
                 service_name,
                 AVG(error_rate) as avg_error_rate,
                 AVG(response_time_avg) as avg_response_time,
+                AVG(response_time_p95) as avg_response_time_p95,
+                AVG(response_time_p99) as avg_response_time_p99,
                 SUM(total_count) as total_requests,
                 SUM(error_count) as total_errors
             FROM service_logs
@@ -97,10 +101,23 @@ class DegradationDetector:
                 row['avg_response_time_recent']
             )
 
-            # Check if degrading
+            # Calculate P95/P99 changes (if available)
+            p95_change = self._calculate_percent_change(
+                row['avg_response_time_p95_baseline'],
+                row['avg_response_time_p95_recent']
+            ) if pd.notna(row['avg_response_time_p95_recent']) and pd.notna(row['avg_response_time_p95_baseline']) else 0.0
+
+            p99_change = self._calculate_percent_change(
+                row['avg_response_time_p99_baseline'],
+                row['avg_response_time_p99_recent']
+            ) if pd.notna(row['avg_response_time_p99_recent']) and pd.notna(row['avg_response_time_p99_baseline']) else 0.0
+
+            # Check if degrading (include P95/P99 in degradation check)
             is_degrading = (
                 error_rate_change > threshold_percent or
-                response_time_change > threshold_percent
+                response_time_change > threshold_percent or
+                p95_change > threshold_percent or
+                p99_change > threshold_percent
             )
 
             if is_degrading:
@@ -115,14 +132,25 @@ class DegradationDetector:
                     'response_time_recent': row['avg_response_time_recent'],
                     'response_time_baseline': row['avg_response_time_baseline'],
                     'response_time_change_percent': response_time_change,
+                    'response_time_p95_recent': row['avg_response_time_p95_recent'] if pd.notna(row['avg_response_time_p95_recent']) else None,
+                    'response_time_p95_baseline': row['avg_response_time_p95_baseline'] if pd.notna(row['avg_response_time_p95_baseline']) else None,
+                    'response_time_p95_change_percent': p95_change,
+                    'response_time_p99_recent': row['avg_response_time_p99_recent'] if pd.notna(row['avg_response_time_p99_recent']) else None,
+                    'response_time_p99_baseline': row['avg_response_time_p99_baseline'] if pd.notna(row['avg_response_time_p99_baseline']) else None,
+                    'response_time_p99_change_percent': p99_change,
                     'total_requests_recent': int(total_req) if pd.notna(total_req) else 0,
                     'total_errors_recent': int(total_err) if pd.notna(total_err) else 0,
-                    'severity': self._classify_severity(error_rate_change, response_time_change)
+                    'severity': self._classify_severity(error_rate_change, response_time_change, p95_change, p99_change)
                 })
 
-        # Sort by severity (highest change first)
+        # Sort by severity (highest change first, prioritizing P99)
         degrading_services.sort(
-            key=lambda x: max(x['error_rate_change_percent'], x['response_time_change_percent']),
+            key=lambda x: max(
+                x['error_rate_change_percent'],
+                x['response_time_change_percent'],
+                x.get('response_time_p95_change_percent', 0),
+                x.get('response_time_p99_change_percent', 0)
+            ),
             reverse=True
         )
 
@@ -298,17 +326,20 @@ class DegradationDetector:
         return ((current - baseline) / baseline) * 100
 
     @staticmethod
-    def _classify_severity(error_rate_change: float, response_time_change: float) -> str:
+    def _classify_severity(error_rate_change: float, response_time_change: float,
+                          p95_change: float = 0.0, p99_change: float = 0.0) -> str:
         """Classify degradation severity.
 
         Args:
             error_rate_change: Error rate change percentage
             response_time_change: Response time change percentage
+            p95_change: P95 latency change percentage
+            p99_change: P99 latency change percentage
 
         Returns:
             Severity level: critical, warning, or minor
         """
-        max_change = max(error_rate_change, response_time_change)
+        max_change = max(error_rate_change, response_time_change, p95_change, p99_change)
 
         if max_change > 100:
             return 'critical'

@@ -39,11 +39,21 @@ class ClaudeClient:
 
     def __init__(self):
         """Initialize Claude client."""
+        from botocore.config import Config
+
+        # Configure with increased timeouts for long responses
+        config = Config(
+            read_timeout=300,  # 5 minutes for reading response
+            connect_timeout=10,  # 10 seconds for connection
+            retries={'max_attempts': 2}
+        )
+
         self.bedrock = boto3.client(
             service_name='bedrock-runtime',
             aws_access_key_id=AWS_ACCESS_KEY_ID,
             aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
-            region_name=AWS_REGION
+            region_name=AWS_REGION,
+            config=config
         )
         self.model_id = BEDROCK_MODEL_ID
         self.conversation_history = []
@@ -73,7 +83,7 @@ class ClaudeClient:
         # Prepare request
         request_body = {
             "anthropic_version": "bedrock-2023-05-31",
-            "max_tokens": 4096,
+            "max_tokens": 8192,
             "messages": self.conversation_history,
             "temperature": 0.7
         }
@@ -94,11 +104,15 @@ class ClaudeClient:
             # Parse response
             response_body = json.loads(response['body'].read())
 
-            # Add assistant response to history
-            self.conversation_history.append({
-                "role": "assistant",
-                "content": response_body.get("content", [])
-            })
+            # Add assistant response to history (with validation)
+            content = response_body.get("content", [])
+            if content:  # ✅ FIX: Only add if content is not empty
+                self.conversation_history.append({
+                    "role": "assistant",
+                    "content": content
+                })
+            else:
+                logger.warning("Received empty content from Claude, not adding to history")
 
             logger.info(f"Claude response received (stop_reason: {response_body.get('stop_reason')})")
 
@@ -110,12 +124,16 @@ class ClaudeClient:
 
     def handle_tool_use(self,
                        response: Dict[str, Any],
-                       tool_executor: Any) -> Optional[Dict[str, Any]]:
+                       tool_executor: Any,
+                       tools: Optional[List[Dict[str, Any]]] = None,
+                       system_prompt: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Handle tool use from Claude's response.
 
         Args:
             response: Claude's response containing tool use
             tool_executor: Function executor instance
+            tools: Optional tool definitions (needed for multi-turn)
+            system_prompt: Optional system prompt (needed for multi-turn)
 
         Returns:
             Final response after tool execution, or None if no tool use
@@ -141,20 +159,27 @@ class ClaudeClient:
                 # Execute the tool
                 result = tool_executor.execute(tool_name, tool_input)
 
+                # Serialize result with validation
+                result_json = json.dumps(result, cls=DateTimeEncoder)
+
+                # ✅ FIX: Validate result is not empty
+                if not result_json or result_json == "null" or result_json == "{}":
+                    result_json = json.dumps({"message": "No data found"})
+
                 tool_results.append({
                     "type": "tool_result",
                     "tool_use_id": tool_use_id,
-                    "content": json.dumps(result, cls=DateTimeEncoder)
+                    "content": result_json
                 })
 
                 logger.info(f"Tool {tool_name} executed successfully")
 
             except Exception as e:
-                logger.error(f"Tool execution failed: {e}")
+                logger.error(f"Tool execution failed: {e}", exc_info=True)
                 tool_results.append({
                     "type": "tool_result",
                     "tool_use_id": tool_use_id,
-                    "content": json.dumps({"error": str(e)}, cls=DateTimeEncoder)
+                    "content": json.dumps({"error": str(e)})
                 })
 
         # Send tool results back to Claude
@@ -163,13 +188,19 @@ class ClaudeClient:
             "content": tool_results
         })
 
-        # Get final response
+        # ✅ FIX: Include system_prompt and tools in follow-up request
         request_body = {
             "anthropic_version": "bedrock-2023-05-31",
-            "max_tokens": 4096,
+            "max_tokens": 8192,
             "messages": self.conversation_history,
             "temperature": 0.7
         }
+
+        if system_prompt:  # ✅ FIX: Preserve system prompt
+            request_body["system"] = system_prompt
+
+        if tools:  # ✅ FIX: Preserve tools for multi-turn
+            request_body["tools"] = tools
 
         try:
             response = self.bedrock.invoke_model(
@@ -179,11 +210,15 @@ class ClaudeClient:
 
             response_body = json.loads(response['body'].read())
 
-            # Add to history
-            self.conversation_history.append({
-                "role": "assistant",
-                "content": response_body.get("content", [])
-            })
+            # Add to history (with validation)
+            content = response_body.get("content", [])
+            if content:  # ✅ FIX: Only add if content is not empty
+                self.conversation_history.append({
+                    "role": "assistant",
+                    "content": content
+                })
+            else:
+                logger.warning("Received empty content after tool use, not adding to history")
 
             return response_body
 
@@ -195,7 +230,8 @@ class ClaudeClient:
             user_message: str,
             tools: Optional[List[Dict[str, Any]]] = None,
             tool_executor: Optional[Any] = None,
-            system_prompt: Optional[str] = None) -> str:
+            system_prompt: Optional[str] = None,
+            max_tool_iterations: int = 5) -> str:
         """Complete chat interaction with tool support.
 
         Args:
@@ -203,6 +239,7 @@ class ClaudeClient:
             tools: Optional tool definitions
             tool_executor: Optional tool executor
             system_prompt: Optional system prompt
+            max_tool_iterations: Maximum number of tool call iterations (default: 5)
 
         Returns:
             Final text response from Claude
@@ -210,15 +247,36 @@ class ClaudeClient:
         # Get initial response
         response = self.send_message(user_message, tools, system_prompt)
 
-        # Handle tool use if present
-        if tool_executor and response.get("stop_reason") == "tool_use":
-            response = self.handle_tool_use(response, tool_executor)
+        # ✅ FIX: Handle multiple rounds of tool calls
+        iterations = 0
+        while tool_executor and response.get("stop_reason") == "tool_use" and iterations < max_tool_iterations:
+            logger.info(f"Tool use iteration {iterations + 1}/{max_tool_iterations}")
+
+            # Pass tools and system_prompt to maintain context
+            response = self.handle_tool_use(response, tool_executor, tools, system_prompt)
+
+            if not response:
+                logger.error("Tool use handler returned None")
+                break
+
+            iterations += 1
+
+        # ✅ FIX: Warn if max iterations reached
+        if iterations >= max_tool_iterations:
+            logger.warning(f"Reached max tool iterations ({max_tool_iterations})")
 
         # Extract text response
         text_response = ""
-        for block in response.get("content", []):
+        content = response.get("content", [])
+
+        for block in content:
             if block.get("type") == "text":
                 text_response += block.get("text", "")
+
+        # ✅ FIX: Return helpful message if no text was generated
+        if not text_response:
+            logger.warning("No text response generated by Claude")
+            text_response = "I was unable to generate a response. Please try rephrasing your question."
 
         return text_response
 

@@ -165,7 +165,7 @@ class MetricsAggregator:
         }
 
     def get_slowest_services(self, limit: int = 10) -> List[Dict[str, Any]]:
-        """Get slowest services by response time.
+        """Get slowest services by P99 latency (or average if P99 unavailable).
 
         Args:
             limit: Number of slowest services to return
@@ -177,12 +177,15 @@ class MetricsAggregator:
             SELECT
                 service_name,
                 AVG(response_time_avg) as avg_response_time,
+                AVG(response_time_p50) as avg_p50,
+                AVG(response_time_p95) as avg_p95,
+                AVG(response_time_p99) as avg_p99,
                 MAX(response_time_max) as max_response_time,
                 MAX(target_response_slo_sec) as response_slo_target,
                 SUM(total_count) as total_requests
             FROM service_logs
             GROUP BY service_name
-            ORDER BY avg_response_time DESC
+            ORDER BY COALESCE(avg_p99, avg_response_time) DESC
             LIMIT {limit}
         """
 
@@ -193,14 +196,24 @@ class MetricsAggregator:
             # Handle NaN values safely
             total_req = row['total_requests']
             avg_rt = row['avg_response_time']
+            avg_p99 = row['avg_p99']
+            avg_p95 = row['avg_p95']
+            avg_p50 = row['avg_p50']
             slo_target = row['response_slo_target']
+
+            # Use P99 for SLO check if available, otherwise use average
+            check_value = avg_p99 if pd.notna(avg_p99) else avg_rt
+
             results.append({
                 'service_name': row['service_name'],
                 'avg_response_time': avg_rt if pd.notna(avg_rt) else 0.0,
+                'response_time_p50': avg_p50 if pd.notna(avg_p50) else None,
+                'response_time_p95': avg_p95 if pd.notna(avg_p95) else None,
+                'response_time_p99': avg_p99 if pd.notna(avg_p99) else None,
                 'max_response_time': row['max_response_time'] if pd.notna(row['max_response_time']) else 0.0,
                 'response_slo_target': slo_target if pd.notna(slo_target) else 1.0,
                 'total_requests': int(total_req) if pd.notna(total_req) else 0,
-                'slo_met': (avg_rt <= slo_target) if (pd.notna(avg_rt) and pd.notna(slo_target)) else True
+                'slo_met': (check_value <= slo_target) if (pd.notna(check_value) and pd.notna(slo_target)) else True
             })
 
         return results
@@ -244,6 +257,46 @@ class MetricsAggregator:
                 'total_requests': int(total_requests) if pd.notna(total_requests) else 0,
                 'error_slo_target': slo_target if pd.notna(slo_target) else 0.0,
                 'slo_met': (avg_err_rate <= slo_target) if (pd.notna(avg_err_rate) and pd.notna(slo_target)) else True
+            })
+
+        return results
+
+    def get_error_details_by_code(self, error_code: str, limit: int = 5) -> List[Dict[str, Any]]:
+        """Get detailed error logs for a specific error code.
+
+        Args:
+            error_code: Error code to search for
+            limit: Number of error details to return
+
+        Returns:
+            List of error details with full log information
+        """
+        sql = f"""
+            SELECT
+                wm_transaction_name,
+                error_codes,
+                error_details,
+                response_time_avg,
+                record_time,
+                wm_application_name
+            FROM error_logs
+            WHERE error_codes = '{error_code}'
+                AND error_details IS NOT NULL
+            ORDER BY record_time DESC
+            LIMIT {limit}
+        """
+
+        df = self.db_manager.query(sql)
+
+        results = []
+        for _, row in df.iterrows():
+            results.append({
+                'transaction_name': row['wm_transaction_name'] if pd.notna(row['wm_transaction_name']) else 'Unknown',
+                'error_code': row['error_codes'],
+                'error_details': row['error_details'] if pd.notna(row['error_details']) else 'No details available',
+                'response_time': row['response_time_avg'] if pd.notna(row['response_time_avg']) else 0.0,
+                'timestamp': str(row['record_time']),
+                'application': row['wm_application_name'] if pd.notna(row['wm_application_name']) else 'Unknown'
             })
 
         return results
