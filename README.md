@@ -64,18 +64,20 @@ AI-powered Service Level Objective (SLO) monitoring and analysis chatbot using C
 pip install -r requirements.txt
 ```
 
-2. **Configure environment variables** (already done in `.env`):
+2. **Configure environment variables** in `.env`:
 ```
 AWS_ACCESS_KEY_ID=your_key
 AWS_SECRET_ACCESS_KEY=your_secret
 AWS_REGION=ap-south-1
 BEDROCK_MODEL_ID=global.anthropic.claude-sonnet-4-5-20250929-v1:0
-```
 
-3. **Load initial data**:
-The JSON log files are already present:
-- `ServiceLogs7Amto11Am31Dec2025.json`
-- `ErrorLogs7Amto11Am31Dec2025.json`
+OPENSEARCH_HOST=your_opensearch_host
+OPENSEARCH_PORT=9200
+OPENSEARCH_USERNAME=admin
+OPENSEARCH_PASSWORD=your_password
+OPENSEARCH_INDEX_SERVICE=your_service_index
+OPENSEARCH_INDEX_ERROR=your_error_index
+```
 
 ## Usage
 
@@ -89,7 +91,7 @@ The web interface will open at `http://localhost:8501`
 
 ### Using the Dashboard
 
-1. **Load Data**: Click "Load Data from JSON Files" in the sidebar
+1. **Load Data**: Click "🔄 Refresh from OpenSearch" in the sidebar to fetch data
 2. **View Metrics**: Check the dashboard for service health overview
 3. **Chat**: Switch to the Chat tab to ask questions
 
@@ -167,35 +169,26 @@ Vector databases are for **unstructured text** semantic search. Our SLO data is 
 
 ### OpenSearch Query Limits
 
-| Query Type | Max Results | Use Case |
-|------------|-------------|----------|
-| **Standard Query** | 10,000 | Real-time monitoring, daily checks |
-| **Scroll API** | Unlimited | Historical analysis, large datasets |
+The application is configured to fetch data within a **maximum 4-hour time window** to ensure optimal performance and stay within OpenSearch limits.
 
 ### Configurable Options in UI
 
 ✅ **Time Range Selection**:
 - Last 4 hours (default)
-- Last 24 hours
-- Last 7 days
-- Last 30 days
-- Custom date/time range
+- Custom date/time range (max 4 hours)
 
-✅ **Max Results**: 100 to 10,000 (for standard queries)
+✅ **Max Results**: 100 to 10,000 results per query
 
-✅ **Scroll API**: Enable for datasets >10k entries
-
-📖 **See [DATA_LIMITS_GUIDE.md](DATA_LIMITS_GUIDE.md) for detailed information on handling large datasets**
+**Note**: The 4-hour limit ensures data stays under the 10,000 result limit without requiring Scroll API.
 
 ## Future Enhancements
 
 - [ ] Real-time OpenSearch streaming with background sync
 - [ ] Alerting system for SLO violations
 - [ ] Custom SLO definitions per service
-- [ ] Export reports (PDF, CSV)
+- [ ] Export dashboard reports (PDF, CSV)
 - [ ] Multi-user authentication
 - [ ] Historical data retention policies
-- [ ] Search After API for continuous pagination
 
 ## License
 

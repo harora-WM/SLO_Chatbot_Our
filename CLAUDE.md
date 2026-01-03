@@ -11,8 +11,9 @@ cp .env.example .env  # Then edit .env with your credentials
 
 # Run the application
 streamlit run app.py
+# Note: Data is loaded from OpenSearch only via the UI
 
-# Run tests
+# Run tests (uses local JSON files for testing)
 python test_system.py
 
 # Inspect database contents
@@ -24,7 +25,7 @@ python debug_opensearch.py
 
 ## Architecture Overview
 
-This is a conversational SLO (Service Level Objective) chatbot using **Claude Sonnet 4.5 via AWS Bedrock**. The system analyzes service and error logs using a **function calling architecture** where Claude has access to 14 analytics functions.
+This is a conversational SLO (Service Level Objective) chatbot using **Claude Sonnet 4.5 via AWS Bedrock**. The system analyzes service and error logs using a **function calling architecture** where Claude has access to 15 analytics functions.
 
 ### Core Data Flow
 
@@ -38,7 +39,7 @@ OpenSearch → DataLoader → DuckDB → Analytics Functions → Claude → User
 
 1. **Data Layer** (`data/`)
    - `data_loader.py`: Parses OpenSearch JSON responses into pandas DataFrames
-   - `opensearch_client.py`: Queries OpenSearch with Scroll API support for >10k results
+   - `opensearch_client.py`: Queries OpenSearch (limited to 4-hour windows, max 10k results)
    - `duckdb_manager.py`: OLAP database for fast analytical queries
 
 2. **Analytics Layer** (`analytics/`)
@@ -49,7 +50,7 @@ OpenSearch → DataLoader → DuckDB → Analytics Functions → Claude → User
 
 3. **Agent Layer** (`agent/`)
    - `claude_client.py`: AWS Bedrock integration with conversation history and tool use handling
-   - `function_tools.py`: 14 analytics functions exposed to Claude via tool calling. The `FunctionExecutor` class dispatches tool calls to appropriate analytics modules.
+   - `function_tools.py`: 15 analytics functions exposed to Claude via tool calling. The `FunctionExecutor` class dispatches tool calls to appropriate analytics modules.
 
 4. **UI Layer**
    - `app.py`: Streamlit web interface with dashboard and chat tabs. Uses `@st.cache_resource` to initialize system components once.
@@ -86,11 +87,13 @@ source = hit.get('_source', {})
 fields = hit.get('fields', {})
 scripted_metric = source.get('scripted_metric', {})
 
-# Try scripted_metric first (live OpenSearch), fallback to fields (JSON export)
+# Try scripted_metric first (live OpenSearch), fallback to fields (for test JSON files)
 service_name = scripted_metric.get('service_name') or self._extract_first(fields.get('service_name'))
 ```
 
 This pattern is in `data/ingestion/data_loader.py` (lines 50-72 for service logs, 112-130 for error logs).
+
+**Important**: Production uses OpenSearch only, but the `fields` fallback is kept for test suite compatibility with local JSON files.
 
 ### JSON Serialization Pattern for Claude Tool Results
 
@@ -212,7 +215,7 @@ Use `.env.example` as a template for new setup.
 
 ## Tool Calling Flow
 
-Claude has access to 14 analytics functions via tool calling (`agent/function_tools.py`). The complete flow:
+Claude has access to 15 analytics functions via tool calling (`agent/function_tools.py`). The complete flow:
 
 1. **User sends message** via Streamlit chat → `app.py` receives input
 2. **Claude receives message** along with `TOOLS` list (tool definitions) in request body
@@ -222,7 +225,7 @@ Claude has access to 14 analytics functions via tool calling (`agent/function_to
    function_map = {
        "get_degrading_services": self._get_degrading_services,
        "get_error_code_distribution": self._get_error_code_distribution,
-       # ... 12 more functions
+       # ... 13 more functions (15 total)
    }
    result = function_map[tool_name](**tool_input)
    ```
@@ -242,6 +245,7 @@ Available functions:
 - `get_error_code_distribution(service_name, time_window_minutes)` - HTTP error breakdown
 - `get_top_errors(limit=10)` - Most common errors
 - `get_error_prone_services(limit=10)` - Services with highest error rates
+- `get_error_details_by_code(error_code)` - Get detailed error logs for specific error code
 
 **Performance:**
 - `get_slowest_services(limit=10)` - Services by response time
@@ -277,23 +281,25 @@ Baseline Window          Recent Window
 4. Compare using percentage change: `((current - baseline) / baseline) * 100`
 5. Flag as degrading if change > threshold (default 20%)
 
-## OpenSearch Scroll API
+## OpenSearch Data Limits
 
-For datasets >10,000 entries, use the Scroll API (`data/ingestion/opensearch_client.py:236-298`):
+The application is configured to query a **maximum 4-hour time window** from OpenSearch. This ensures:
+- Data stays well under the 10,000 result limit
+- Fast query performance
+- No need for Scroll API or pagination
 
+**Standard query pattern** (`data/ingestion/opensearch_client.py`):
 ```python
-# Standard query (max 10,000)
-response = client.query_service_logs(size=1000, use_scroll=False)
-
-# Scroll API (unlimited)
-response = client.query_service_logs(size=1000, use_scroll=True)
+# Query with 4-hour window (use_scroll=False)
+response = client.query_service_logs(
+    start_time=start_time,
+    end_time=end_time,
+    size=1000,
+    use_scroll=False
+)
 ```
 
-**How Scroll API works:**
-1. Initial search returns scroll_id and first batch
-2. Subsequent scroll calls using scroll_id return next batches
-3. Keep context alive with 2-minute scroll timeout
-4. Clear scroll_id when done
+**Note**: The UI enforces the 4-hour maximum when users select custom time ranges.
 
 ## Testing
 
@@ -303,13 +309,15 @@ python test_system.py
 ```
 
 This tests:
-1. Data loading from JSON files
+1. Data loading from JSON files (for testing purposes only - production uses OpenSearch)
 2. SLO calculations
 3. Degradation detection
 4. Trend analysis
 5. Metrics aggregation
 
 Expected output: 5/5 tests passing with ~60-70 services loaded.
+
+**Note**: The test suite uses local JSON files (`ServiceLogs7Amto11Am31Dec2025.json` and `ErrorLogs7Amto11Am31Dec2025.json`) for testing. In production, the application loads data exclusively from OpenSearch via the UI.
 
 ## Common Issues
 
@@ -383,12 +391,12 @@ analytics/
 
 agent/
   ├── claude_client.py         - AWS Bedrock integration with conversation history
-  └── function_tools.py        - 14 tool definitions + FunctionExecutor dispatcher
+  └── function_tools.py        - 15 tool definitions + FunctionExecutor dispatcher
 
 data/
   ├── ingestion/
   │   ├── data_loader.py       - Parses OpenSearch JSON to pandas DataFrames
-  │   └── opensearch_client.py - Queries OpenSearch (with Scroll API support)
+  │   └── opensearch_client.py - Queries OpenSearch (4-hour max window, no Scroll API)
   └── database/
       └── duckdb_manager.py    - OLAP database with INSERT/query methods
 
@@ -433,8 +441,8 @@ This maintains multi-turn context for Claude across the entire session.
 
 ### When modifying analytics functions:
 1. **Always add NaN checks** for integer conversions (see "NaN Handling Pattern")
-2. **Test with** `python test_system.py`
-3. **Verify both data paths**: OpenSearch (scripted_metric) and JSON (fields)
+2. **Test with** `python test_system.py` (uses local JSON files)
+3. **Test with OpenSearch** in the UI to verify production behavior
 4. **Use `pd.notna()`** before any `int()` conversion
 5. **Return consistent structures** (dict/list) for Claude to parse
 6. **Use DateTimeEncoder** when serializing results

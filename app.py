@@ -102,19 +102,20 @@ def initialize_system():
     }
 
 
-def load_initial_data(data_loader):
-    """Load initial data from JSON files."""
-    service_logs_path = PROJECT_ROOT / "ServiceLogs7Amto11Am31Dec2025.json"
-    error_logs_path = PROJECT_ROOT / "ErrorLogs7Amto11Am31Dec2025.json"
-
-    if service_logs_path.exists() and error_logs_path.exists():
-        with st.spinner("Loading service and error logs..."):
-            data_loader.load_and_store_all(str(service_logs_path), str(error_logs_path))
-        st.success("Data loaded successfully!")
-        return True
-    else:
-        st.error("Log files not found!")
-        return False
+# JSON file loading removed - data now only comes from OpenSearch
+# def load_initial_data(data_loader):
+#     """Load initial data from JSON files."""
+#     service_logs_path = PROJECT_ROOT / "ServiceLogs7Amto11Am31Dec2025.json"
+#     error_logs_path = PROJECT_ROOT / "ErrorLogs7Amto11Am31Dec2025.json"
+#
+#     if service_logs_path.exists() and error_logs_path.exists():
+#         with st.spinner("Loading service and error logs..."):
+#             data_loader.load_and_store_all(str(service_logs_path), str(error_logs_path))
+#         st.success("Data loaded successfully!")
+#         return True
+#     else:
+#         st.error("Log files not found!")
+#         return False
 
 
 def display_dashboard(components):
@@ -449,23 +450,22 @@ def main():
     with st.sidebar:
         st.markdown("## 🔧 Configuration")
 
-        # Data loading
+        # Data loading from OpenSearch only
         st.markdown("### Data Management")
-
-        if st.button("🔄 Load Data from JSON Files"):
-            load_initial_data(components['data_loader'])
+        st.info("📊 Data is loaded from OpenSearch only")
 
         st.markdown("#### OpenSearch Options")
 
         # Time range selection
         time_range_option = st.selectbox(
             "Time Range",
-            ["Last 4 hours", "Last 24 hours", "Last 7 days", "Last 30 days", "Custom"],
+            ["Last 4 hours", "Custom"],
             index=0
         )
 
         # Custom time range inputs
         if time_range_option == "Custom":
+            st.info("⚠️ Maximum time range is 4 hours")
             col1, col2 = st.columns(2)
             with col1:
                 start_date = st.date_input("Start Date")
@@ -474,20 +474,13 @@ def main():
                 end_date = st.date_input("End Date")
                 end_time = st.time_input("End Time")
 
-        # Large dataset handling
-        use_scroll = st.checkbox(
-            "Use Scroll API (for >10k results)",
-            value=False,
-            help="Enable for datasets larger than 10,000 entries. Slower but handles unlimited data."
-        )
-
         max_results = st.number_input(
-            "Max Results (if not using scroll)",
+            "Max Results",
             min_value=100,
             max_value=10000,
             value=1000,
             step=100,
-            help="Maximum results to fetch (OpenSearch limit: 10,000)"
+            help="Maximum results to fetch from OpenSearch"
         )
 
         if st.button("🔄 Refresh from OpenSearch"):
@@ -501,31 +494,34 @@ def main():
 
                     if time_range_option == "Last 4 hours":
                         start_time_dt = end_time_dt - timedelta(hours=4)
-                    elif time_range_option == "Last 24 hours":
-                        start_time_dt = end_time_dt - timedelta(hours=24)
-                    elif time_range_option == "Last 7 days":
-                        start_time_dt = end_time_dt - timedelta(days=7)
-                    elif time_range_option == "Last 30 days":
-                        start_time_dt = end_time_dt - timedelta(days=30)
                     else:  # Custom
                         start_time_dt = datetime.combine(start_date, start_time)
                         end_time_dt = datetime.combine(end_date, end_time)
 
+                        # Validate that time range doesn't exceed 4 hours
+                        time_diff = end_time_dt - start_time_dt
+                        if time_diff > timedelta(hours=4):
+                            st.error("❌ Time range cannot exceed 4 hours. Please adjust your selection.")
+                            st.stop()
+                        elif time_diff <= timedelta(0):
+                            st.error("❌ End time must be after start time.")
+                            st.stop()
+
                     st.info(f"Fetching data from {start_time_dt} to {end_time_dt}")
 
-                    # Fetch logs with options
+                    # Fetch logs without scroll API
                     service_logs = os_client.query_service_logs(
                         start_time=start_time_dt,
                         end_time=end_time_dt,
                         size=max_results,
-                        use_scroll=use_scroll
+                        use_scroll=False
                     )
 
                     error_logs = os_client.query_error_logs(
                         start_time=start_time_dt,
                         end_time=end_time_dt,
                         size=max_results,
-                        use_scroll=use_scroll
+                        use_scroll=False
                     )
 
                     # Load into database

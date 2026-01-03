@@ -47,6 +47,10 @@ logs/
 # Streamlit
 .streamlit/
 
+# Claude Code
+.claude/
+settings.local.json
+
 # Temporary files
 *.tmp
 temp/
