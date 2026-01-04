@@ -34,7 +34,7 @@ The app will open at `http://localhost:8501`
 ## Using the Chatbot
 
 ### Step 1: Load Data
-Click **"Load Data from JSON Files"** in the sidebar to load the sample data.
+Click **"🔄 Refresh from OpenSearch"** in the sidebar to load data from OpenSearch (max 4-hour window).
 
 ### Step 2: View Dashboard
 Check the **Dashboard tab** to see:
@@ -77,9 +77,13 @@ What's the error rate trend for degrading services?
 
 To fetch live data from OpenSearch:
 
-1. Click **"Refresh from OpenSearch"** in the sidebar
-2. The chatbot will fetch the latest 4 hours of logs
-3. All analytics will update with fresh data
+1. Click **"🔄 Refresh from OpenSearch"** in the sidebar
+2. Select time range (Last 4 hours or Custom - max 4 hours)
+3. Adjust Max Results if needed (100-10,000)
+4. The chatbot will fetch logs from OpenSearch
+5. All analytics will update with fresh data
+
+**Note:** The maximum time window is 4 hours to stay within OpenSearch limits. Scroll API is not used.
 
 ---
 
@@ -136,8 +140,9 @@ DEGRADATION_THRESHOLD_PERCENT = 20     # 20% change = degradation
 ## Troubleshooting
 
 **No data displayed?**
-- Click "Load Data from JSON Files" in the sidebar
-- Make sure the JSON files exist in the project root
+- Click "🔄 Refresh from OpenSearch" in the sidebar
+- Make sure OpenSearch credentials are configured in `.env`
+- Verify OpenSearch connection with `python debug_opensearch.py`
 
 **Chat not working?**
 - Check AWS credentials in `.env`

@@ -55,11 +55,11 @@ If it doesn't open automatically, just copy-paste that URL into your browser.
 
 In the Streamlit UI sidebar:
 
-1. **Click**: "🔄 Load Data from JSON Files"
-2. **Wait**: ~2 seconds for data to load
-3. **See**: "Data loaded successfully!" message
+1. **Click**: "🔄 Refresh from OpenSearch"
+2. **Wait**: ~2-5 seconds for data to load from OpenSearch
+3. **See**: "✅ Loaded X service logs and Y error logs" message
 
-✅ You now have 63 services and 336 log entries loaded!
+✅ Data will be loaded from your OpenSearch instance (max 4-hour window)!
 
 ---
 
@@ -163,7 +163,7 @@ When you first open the app, you'll see:
 - Top Services by Volume chart
 - Current SLO Violations
 
-**First Action**: Click "🔄 Load Data from JSON Files" in sidebar
+**First Action**: Click "🔄 Refresh from OpenSearch" in sidebar to load data
 
 ---
 
@@ -172,24 +172,21 @@ When you first open the app, you'll see:
 ```
 🔧 Configuration
 ├── Data Management
-│   ├── 🔄 Load Data from JSON Files ← START HERE
-│   └── 🔄 Refresh from OpenSearch
-│
-├── OpenSearch Options
-│   ├── Time Range: [Last 4 hours ▼]
-│   ├── ☐ Use Scroll API
-│   ├── Max Results: 1000
-│   └── 🔄 Refresh from OpenSearch
-│
-├── 📅 Data Time Range
-│   ├── From: 2025-12-31 07:00:00
-│   └── To: 2025-12-31 11:00:00
-│
-├── 📊 Total Services: 63
-│
-├── 🗑️ Clear Chat History
-│
-└── 💡 Sample Questions
+│   ├── 📊 Data is loaded from OpenSearch only
+│   │
+│   ├── OpenSearch Options
+│   │   ├── Time Range: [Last 4 hours ▼] (or Custom - max 4 hours)
+│   │   ├── Max Results: 1000 (100-10,000)
+│   │   └── 🔄 Refresh from OpenSearch ← START HERE
+│   │
+│   ├── 📅 Data Time Range
+│   │   └── Shows loaded data range
+│   │
+│   ├── 📊 Total Services Loaded
+│   │
+│   ├── 🗑️ Clear Chat History
+│   │
+│   └── 💡 Sample Questions
 ```
 
 ---
@@ -222,29 +219,27 @@ Compare error rates across all degrading services
 
 ---
 
-## Fetching Live Data from OpenSearch
+## Fetching Data from OpenSearch
 
 ### Using Default Settings (Quick)
 
 1. In sidebar, click **"🔄 Refresh from OpenSearch"**
 2. Wait 2-5 seconds
-3. Data refreshes automatically
+3. Data refreshes automatically (last 4 hours)
 
 ### Using Custom Time Range
 
-1. Select time range: **Last 24 hours**
-2. Check **☑ Use Scroll API** (if expecting >10k results)
-3. Adjust **Max Results** if needed
-4. Click **"🔄 Refresh from OpenSearch"**
-5. Wait for completion
-
-### Using Custom Dates
-
-1. Select **"Custom"** from Time Range dropdown
+1. Select time range: **"Custom"** from dropdown
 2. Pick **Start Date** and **Start Time**
-3. Pick **End Date** and **End Time**
-4. Enable **Scroll API** for large datasets
+3. Pick **End Date** and **End Time** (max 4 hours from start)
+4. Adjust **Max Results** if needed (100-10,000)
 5. Click **"🔄 Refresh from OpenSearch"**
+6. Wait for completion
+
+**Important Limits:**
+- Maximum time window: **4 hours** (enforced by the app)
+- Maximum results: **10,000** per query
+- Scroll API: **Not used** (data stays within limits)
 
 ---
 
@@ -353,27 +348,25 @@ Total: 5/5 tests passed
 ## Performance Tips
 
 ### For Faster Queries
-- Use smaller time ranges (4-24 hours)
+- Use "Last 4 hours" default option (fastest)
 - Keep max results at 1,000 for quick checks
-- Disable scroll API for small datasets
+- Custom time ranges take slightly longer
 
-### For Complete Analysis
-- Use scroll API for datasets >10k
-- Extend time range to 7-30 days
-- Run during off-peak hours for very large datasets
+### For Maximum Data
+- Set Max Results to 10,000
+- Use the full 4-hour window
+- Note: Data beyond 4 hours requires multiple manual refreshes
 
 ---
 
 ## File Locations
 
 ```
-/home/hardik121/slo_chatbot/
+/home/hardik121/SLO_Chatbot_Our/
 ├── app.py                          ← Main application
 ├── run.sh                          ← Quick start script
-├── test_system.py                  ← Test suite
-├── .env                            ← AWS credentials
-├── ServiceLogs...json              ← Sample service logs
-├── ErrorLogs...json                ← Sample error logs
+├── test_system.py                  ← Test suite (uses local JSON for testing)
+├── .env                            ← AWS & OpenSearch credentials
 └── data/database/
     └── slo_analytics.duckdb        ← Local database (auto-created)
 ```
@@ -382,10 +375,10 @@ Total: 5/5 tests passed
 
 ## Next Steps After Setup
 
-1. ✅ **Load sample data** - Click "Load Data from JSON Files"
+1. ✅ **Load data** - Click "🔄 Refresh from OpenSearch"
 2. ✅ **Explore dashboard** - View service health metrics
 3. ✅ **Try chat** - Ask sample questions
-4. ✅ **Fetch live data** - Connect to OpenSearch
+4. ✅ **Monitor continuously** - Refresh data periodically
 5. ✅ **Customize** - Adjust SLO thresholds in `utils/config.py`
 
 ---
